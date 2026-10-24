@@ -1,0 +1,22 @@
+# Local private state must never be committed or used as a distribution template.
+config.json
+config.json.*
+!config.example.json
+logs/
+data/
+.venv/
+.runtime/
+**/__pycache__/
+*.py[cod]
+
+# Third-party runtime bundles are installed separately on target machines.
+# Keep user state, redistributable binaries, and files over GitHub's 100 MB limit out.
+NapCat.Shell.Windows.Node/
+steam++/
+
+NapCat.Shell.Windows.Node/napcat/config/
+NapCat.Shell.Windows.Node/napcat/cache/
+NapCat.Shell.Windows.Node/**/*.db*
+NapCat.Shell.Windows.Node/**/*.log
+steam++/AppData/
+steam++/Cache/
