@@ -9,8 +9,9 @@ import time
 from ..logger import get_logger
 from .base import PushError
 from .email import EmailChannel
-from .qq import QQChannel, _parse_qq_list
+from .qq import QQChannel
 from .telegram import TelegramChannel
+from ..recipient_profiles import recipient_ids
 
 log = get_logger()
 
@@ -83,6 +84,8 @@ class Dispatcher:
                 except (ValueError, TypeError, AttributeError):
                     log.warning('推送渠道配置无法加载，已跳过该渠道。')
                     continue
+            if getattr(self.cfg, 'path', '') and name in {'qq', 'telegram'}:
+                channel.recipient_allowed = lambda identifier, group=False, n=name: self._recipient_still_enabled(n, identifier, group)
             channels.append(channel)
         self.channels = sorted(channels, key=lambda channel: self.PRIORITY.get(channel.name, 9))
 
@@ -91,6 +94,17 @@ class Dispatcher:
         push = self._read_live_push()
         return (push is not None and name in push.get('enabled', [])
                 and (expected_config is None or push.get(name, {}) == expected_config))
+
+    def _recipient_still_enabled(self, name, identifier, group=False):
+        push = self._read_live_push()
+        if push is None or name not in push.get('enabled', []):
+            return False
+        config = push.get(name, {})
+        if not isinstance(config, dict):
+            return False
+        if group:
+            return str(config.get('group_id', '')) == str(identifier)
+        return str(identifier) in recipient_ids(config, name)
 
     def _refresh_qq_subscribers(self, push):
         """Refresh recipients without replacing the active QQ connection settings."""
@@ -106,7 +120,7 @@ class Dispatcher:
                 recipients = re.split(r'[,，;；\s]+', recipients)
             if not isinstance(recipients, list):
                 raise ValueError('invalid recipient list')
-            users = _parse_qq_list(recipients)
+            users = recipient_ids(qq, 'qq')
             for channel in qq_channels:
                 channel.private_qq_list = list(users)
             return True

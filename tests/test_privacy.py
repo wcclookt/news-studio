@@ -11,11 +11,20 @@ import unittest
 from news_agent.config_io import atomic_update_json
 from news_agent.config_store import ConfigStore,validate_config
 from news_agent.factory_defaults import fresh_config,public_backup
-from news_agent.privacy import PrivacyLogFilter,redact_text,register_private_values
+from news_agent.privacy import PrivacyLogFilter,redact_text,register_private_values,private_values
 from scripts.privacy_audit import audit,clean,collect_private
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_recipient_names_and_notes_are_private_but_default_endpoints_are_not(self):
+        data = fresh_config()
+        data['push']['qq']['private_qq_profiles'] = [{'user_id':'123456789', 'nickname':'private-name', 'note':'private-note'}]
+        data['push']['telegram']['chat_ids'] = ['-1001234567']
+        values = private_values(data)
+        self.assertTrue({'123456789','private-name','private-note','-1001234567'} <= values)
+        self.assertNotIn('http://127.0.0.1:3000', values)
+        self.assertNotIn('smtp.163.com', values)
+
     def test_fresh_defaults_are_independent_and_have_no_accounts(self):
         first=fresh_config()
         self.assertEqual(validate_config(first),[])

@@ -3,6 +3,7 @@ import re
 
 from ..logger import get_logger
 from .base import PushChannel, PushError
+from ..recipient_profiles import recipient_ids
 
 log = get_logger()
 
@@ -21,7 +22,7 @@ class QQChannel(PushChannel):
         super().__init__(cfg)
         self.http_base = cfg.get("http_base", "http://127.0.0.1:3000").rstrip("/")
         self.access_token = cfg.get("access_token", "")
-        self.private_qq_list = _parse_qq_list(cfg.get("private_qq", ""))
+        self.private_qq_list = recipient_ids(cfg, 'qq')
         self.group_id = str(cfg.get("group_id", "") or "")
 
     def _headers(self):
@@ -76,9 +77,12 @@ class QQChannel(PushChannel):
         messages = self._split(title, content)
         sent = 0
         errors = []
+        allowed = getattr(self, 'recipient_allowed', lambda identifier, group=False: True)
         for qq in self.private_qq_list:
             try:
                 for text in messages:
+                    if not allowed(qq):
+                        break
                     self._call("send_private_msg", {"user_id": qq, "message": text})
                     sent += 1
             except PushError as e:
@@ -87,11 +91,15 @@ class QQChannel(PushChannel):
         if self.group_id and self.group_id.isdigit():
             try:
                 for text in messages:
+                    if not allowed(self.group_id, group=True):
+                        break
                     self._call("send_group_msg", {"group_id": self.group_id, "message": text})
                     sent += 1
             except PushError as e:
                 errors.append(f"群{self.group_id}: {e}")
                 log.warning("推送到群 %s 失败: %s", self.group_id, e)
         if not sent:
+            if not errors and (self.private_qq_list or self.group_id):
+                return False
             raise PushError("QQ 推送全部失败: " + "; ".join(errors) if errors else "未配置接收对象")
         return True

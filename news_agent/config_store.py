@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from urllib.parse import urlparse
 
+from .recipient_profiles import recipient_ids
+
 
 MISSING = object()
 
@@ -118,7 +120,7 @@ def validate_config_structure(data):
         check(path, (bool,), 'true 或 false')
     for path in ('push.qq.group_id', 'push.telegram.chat_id'):
         check(path, (str, int), '字符串或整数')
-    for path in ('push.enabled', 'push.email.to', 'sources.arxiv.categories'):
+    for path in ('push.enabled', 'push.email.to', 'push.telegram.chat_ids', 'sources.arxiv.categories'):
         value = get_value(data, path, MISSING)
         if value is not MISSING and (not isinstance(value, list) or any(type(item) is not str for item in value)):
             errors.append(f'{path}：必须是字符串列表')
@@ -128,6 +130,32 @@ def validate_config_structure(data):
         or isinstance(recipients, list) and all(type(item) in (str, int) for item in recipients)
     ):
         errors.append('push.qq.private_qq：必须是 QQ 号字符串或列表')
+    def profile_list(path, key, description, predicate):
+        value = get_value(data, path, MISSING)
+        if value is MISSING:
+            return
+        seen = set()
+        invalid = not isinstance(value, list)
+        if isinstance(value, list):
+            for item in value:
+                identifier = item.get(key) if isinstance(item, dict) else None
+                if (not isinstance(item, dict) or type(identifier) not in (str, int)
+                        or not predicate(identifier) or str(identifier).strip() in seen):
+                    invalid = True
+                    continue
+                seen.add(str(identifier).strip())
+                for field in ('nickname', 'name', 'title', 'note'):
+                    if field in item and not isinstance(item[field], str):
+                        invalid = True
+        if invalid:
+            errors.append(f'{path}：必须是包含 {description} 的不重复对象列表')
+
+    profile_list('push.qq.private_qq_profiles', 'user_id', '数字 user_id',
+                 lambda value: str(value or '').strip().isdigit())
+    profile_list('push.email.to_profiles', 'address', '有效 address',
+                 lambda value: isinstance(value, str) and '@' in value and bool(value.strip()))
+    profile_list('push.telegram.chat_profiles', 'chat_id', 'chat_id',
+                 lambda value: bool(str(value or '').strip()))
     rss = get_value(data, 'sources.rss', MISSING)
     if rss is not MISSING:
         if not isinstance(rss, list):
@@ -209,7 +237,9 @@ def validate_config(data):
         port = get_value(data, 'push.qq.ws_port', 3001)
         if type(port) is not int or not 1 <= port <= 65535:
             errors.append('QQ WebSocket 端口：必须在 1～65535 之间')
-        recipients = get_value(data, 'push.qq.private_qq', [])
+        recipients = get_value(data, 'push.qq.private_qq', None)
+        if recipients is None:
+            recipients = recipient_ids(get_value(data, 'push.qq', {}), 'qq')
         if isinstance(recipients, str):
             recipients = [x.strip() for x in re.split(r'[,，;；\n]+', recipients) if x.strip()]
         if not isinstance(recipients, list) or any(not str(x).isdigit() for x in recipients):
@@ -221,16 +251,18 @@ def validate_config(data):
         for key, label in [('smtp_host', 'SMTP 服务器'), ('username', '发件邮箱'), ('password', '邮箱授权码')]:
             if not get_value(data, f'push.email.{key}', '').strip():
                 errors.append(f'邮箱已启用：请填写{label}')
-        recipients = get_value(data, 'push.email.to', [])
+        recipients = recipient_ids(get_value(data, 'push.email', {}), 'email')
         if not isinstance(recipients, list) or not recipients or any('@' not in str(x) for x in recipients):
             errors.append('邮箱已启用：请填写有效的收件邮箱列表')
         port = get_value(data, 'push.email.smtp_port', 465)
         if type(port) is not int or not 1 <= port <= 65535:
             errors.append('SMTP 端口：必须在 1～65535 之间')
     if 'telegram' in enabled:
-        for key, label in [('bot_token', 'Bot Token'), ('chat_id', 'Chat ID')]:
-            if not str(get_value(data, f'push.telegram.{key}', '')).strip():
-                errors.append(f'Telegram 已启用：请填写 {label}')
+        if not str(get_value(data, 'push.telegram.bot_token', '')).strip():
+            errors.append('Telegram 已启用：请填写 Bot Token')
+        chat_ids = recipient_ids(get_value(data, 'push.telegram', {}), 'telegram')
+        if not chat_ids:
+            errors.append('Telegram 已启用：请填写 Chat ID')
     from .model_catalog import provider_requires_api_key, resolve_adapter
     for section in ('chat', 'llm'):
         for role in ('primary', 'fallback'):

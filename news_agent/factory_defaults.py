@@ -32,10 +32,10 @@ def fresh_config():
             'hackernews': {'enabled': False, 'max_items': 0}},
         'push': {'enabled': [],
                  'qq': {'http_base': 'http://127.0.0.1:3000', 'ws_port': 3001,
-                        'access_token': '', 'private_qq': [], 'group_id': ''},
+                        'access_token': '', 'private_qq': [], 'private_qq_profiles': [], 'group_id': ''},
                  'email': {'smtp_host': 'smtp.163.com', 'smtp_port': 465,
-                           'username': '', 'password': '', 'to': []},
-                 'telegram': {'bot_token': '', 'chat_id': '', 'proxy': ''}},
+                           'username': '', 'password': '', 'to': [], 'to_profiles': []},
+                 'telegram': {'bot_token': '', 'chat_id': '', 'chat_ids': [], 'chat_profiles': [], 'proxy': ''}},
         'desktop': {'steampp_path': ''},
     }
 

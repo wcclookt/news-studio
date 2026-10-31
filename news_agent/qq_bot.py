@@ -9,7 +9,7 @@ from .config import load_config
 from .config_io import atomic_update_json
 from .llm import LLMClient
 from .logger import get_logger
-from .push.qq import _parse_qq_list
+from .recipient_profiles import merge_profile, remove_profile, recipient_ids
 from .link_reader import extract_urls, read_link
 
 log = get_logger()
@@ -168,7 +168,7 @@ class QQBot:
         elif user_id:
             self._call_http("send_private_msg", {"user_id": str(user_id), "message": text})
 
-    def _subscription_command(self, text, user_id):
+    def _subscription_command(self, text, user_id, profile=None):
         """QQ 自助管理接收列表，不在代码里写死 QQ 号。"""
         qq = str(user_id or "")
         if not qq.isdigit() or not getattr(self.cfg, "path", ""):
@@ -178,26 +178,42 @@ class QQBot:
             def subscribe(latest):
                 nonlocal added
                 qq_cfg = latest.setdefault("push", {}).setdefault("qq", {})
-                users = _parse_qq_list(qq_cfg.get("private_qq", []))
+                users = recipient_ids(qq_cfg, 'qq')
                 added = qq not in users
                 if added:
                     users.append(qq)
                 qq_cfg["private_qq"] = users
+                if profile:
+                    qq_cfg['private_qq_profiles'] = merge_profile(
+                        qq_cfg.get('private_qq_profiles', []), 'user_id', qq,
+                        nickname=profile.get('nickname', ''), note=profile.get('note', ''))
                 return latest
             self.cfg.data = atomic_update_json(self.cfg.path, subscribe)
             return "好哒，已经把你加入新闻推送啦✨" if added else "你已经在推送列表里啦✨"
-        if text in {"取消订阅", "退订", "停止推送"}:
+        if text in {"取消", "取消订阅", "退订", "停止推送"}:
             def unsubscribe(latest):
                 qq_cfg = latest.setdefault("push", {}).setdefault("qq", {})
-                qq_cfg["private_qq"] = [value for value in _parse_qq_list(qq_cfg.get("private_qq", [])) if value != qq]
+                qq_cfg["private_qq"] = [value for value in recipient_ids(qq_cfg, 'qq') if value != qq]
+                if 'private_qq_profiles' in qq_cfg:
+                    qq_cfg['private_qq_profiles'] = remove_profile(qq_cfg['private_qq_profiles'], 'user_id', qq)
                 return latest
             self.cfg.data = atomic_update_json(self.cfg.path, unsubscribe)
             return "好的，已停止给你推送新闻。需要时再叫我就好啦~"
         if text in {"订阅列表", "推送列表"}:
             qq_cfg = load_config(self.cfg.path).push().get('qq', {})
-            users = _parse_qq_list(qq_cfg.get('private_qq', []))
+            users = recipient_ids(qq_cfg, 'qq')
             return "当前推送人数：%d" % len(users)
         return None
+
+    @staticmethod
+    def sender_profile(data):
+        """Extract a non-authoritative display profile from a OneBot event."""
+        sender = data.get('sender') if isinstance(data, dict) else None
+        sender = sender if isinstance(sender, dict) else {}
+        user_id = str(data.get('user_id', '') if isinstance(data, dict) else '').strip()
+        nickname = str(sender.get('nickname') or sender.get('card') or '').strip()
+        note = str(sender.get('card') or '').strip()
+        return {'user_id': user_id, 'nickname': nickname, 'note': note}
 
     def _extract_text(self, message):
         if isinstance(message, str):
@@ -287,7 +303,7 @@ class QQBot:
         message_type = data.get("message_type", "private")
         text = re.sub(r"\[CQ:at,[^\]]*\]", "", text).strip()
         # Local commands must run before quoted messages or links are fetched.
-        command_reply = self._subscription_command(text, user_id)
+        command_reply = self._subscription_command(text, user_id, self.sender_profile(data))
         if command_reply:
             self._reply(message_type, user_id, group_id, command_reply)
             return
@@ -302,7 +318,7 @@ class QQBot:
             return
         if text in {"帮助", "/help"}:
             self._reply(message_type, user_id, group_id,
-                        "可以直接提问、发新闻链接或引用消息让我解读。\n订阅新闻 / 取消订阅 / 订阅列表\n清空对话：清除最近两轮上下文。")
+                        "可以直接提问、发新闻链接或引用消息让我解读。\n订阅 / 订阅新闻：加入推送\n取消 / 取消订阅：停止推送\n订阅列表：查看订阅人数\n清空对话：清除最近两轮上下文。")
             return
         if not reply_id and (len(text) < 2 or not any(char.isalnum() for char in text)):
             return

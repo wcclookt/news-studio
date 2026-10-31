@@ -124,6 +124,7 @@
       "ws_port": 3001,
       "access_token": "",
       "private_qq": [],
+      "private_qq_profiles": [],
       "group_id": ""
     },
     "email": {
@@ -131,11 +132,14 @@
       "smtp_port": 465,
       "username": "",
       "password": "",
-      "to": []
+      "to": [],
+      "to_profiles": []
     },
     "telegram": {
       "bot_token": "",
       "chat_id": "",
+      "chat_ids": [],
+      "chat_profiles": [],
       "proxy": ""
     }
   },

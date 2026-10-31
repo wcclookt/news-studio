@@ -18,11 +18,13 @@ from PySide6.QtWidgets import (
 from ..config_store import ConfigStore, get_value, set_value, validate_config
 from .. import __author__, PROJECT_ATTRIBUTION
 from ..config_io import atomic_update_json
+from ..recipient_profiles import recipient_rows, merge_refreshed_rows
 from ..model_catalog import ADAPTER_CHOICES, PROVIDER_PRESETS, PROVIDERS_BY_ID, provider_requires_api_key, resolve_adapter
 from .services import ServiceManager
 from .qq_test import TEST_MESSAGE, send_test_message
 from .cache_page import CachePage
 from .theme import make_icon
+from .recipient_list import RecipientTable
 from .widgets import Card, Hero, Toggle, label, note
 
 
@@ -120,6 +122,9 @@ class ConfigWindow(QMainWindow):
         except (OSError, ValueError):
             self.initial_error = '旧配置快照暂时无法移除，请检查配置目录写入权限。'
         self.fields = {}
+        self._recipient_epoch = 0
+        self.recipient_profile_paths = {}
+        self.recipient_profile_baseline = {}
         self.baseline = {}
         self.channel_toggles = {}
         self.channel_forms = {}
@@ -295,7 +300,7 @@ class ConfigWindow(QMainWindow):
         elif index == 7:
             self.cache_page.refresh()
 
-    def field(self, path, title, kind='text', default='', hint='', low=0, high=9999, suffix=''):
+    def field(self, path, title, kind='text', default='', hint='', low=0, high=9999, suffix='', profile_path=None):
         container = QWidget()
         column = QVBoxLayout(container)
         column.setContentsMargins(0, 0, 0, 0)
@@ -342,6 +347,15 @@ class ConfigWindow(QMainWindow):
             editor = QTimeEdit()
             editor.setDisplayFormat('HH:mm')
             column.addWidget(editor)
+        elif kind == 'recipient_list':
+            if path.startswith('push.qq.'):
+                editor = RecipientTable('user_id', 'nickname', 'QQ 号', 'QQ 名称', hint)
+            elif path.startswith('push.telegram.'):
+                editor = RecipientTable('chat_id', 'title', 'Chat ID', '名称', hint)
+            else:
+                editor = RecipientTable('address', 'name', '邮箱地址', '名称', hint)
+            hint = ''
+            column.addWidget(editor)
         elif kind in ('list', 'qq_list'):
             editor = QPlainTextEdit()
             editor.setFixedHeight(78)
@@ -362,6 +376,8 @@ class ConfigWindow(QMainWindow):
         if hint:
             column.addWidget(label(hint, 'muted', True))
         self.fields[path] = (editor, kind, default)
+        if profile_path:
+            self.recipient_profile_paths[path] = profile_path
         if isinstance(editor, QCheckBox):
             editor.toggled.connect(self.on_change)
         elif isinstance(editor, (QSpinBox, QDoubleSpinBox)):
@@ -370,6 +386,9 @@ class ConfigWindow(QMainWindow):
             editor.timeChanged.connect(self.on_change)
         elif isinstance(editor, QComboBox):
             editor.currentTextChanged.connect(self.on_change)
+        elif isinstance(editor, RecipientTable):
+            editor.changed.connect(self.on_change)
+            editor.refreshRequested.connect(lambda p=path: self.refresh_recipient_list(p))
         else:
             editor.textChanged.connect(self.on_change)
         return container
@@ -442,11 +461,13 @@ class ConfigWindow(QMainWindow):
                     self.field('push.qq.access_token', '接口鉴权 Token', 'secret', hint='NapCat 未设置鉴权时可留空'),
                     self.field('push.qq.group_id', '接收 QQ 群号', hint='可选；机器人需已加入该群'),
                 ])
-                form.addWidget(self.field('push.qq.private_qq', '接收新闻的 QQ 号', 'qq_list', [], '多个 QQ 号用逗号或换行分隔，也可以向机器人发送“订阅新闻”'))
+                form.addWidget(self.field(
+                    'push.qq.private_qq', '接收新闻的 QQ 用户', 'recipient_list', [],
+                    '双击编辑；添加、删除或备注后保存。QQ 用户发送“订阅”加入，发送“取消”或“取消订阅”退出。',
+                    profile_path='push.qq.private_qq_profiles'))
                 subscribers_row = QHBoxLayout()
                 self.subscription_status = label('自动同步机器人订阅列表，每 2 秒检查一次。', 'muted', True)
                 subscribers_row.addWidget(self.subscription_status, 1)
-                subscribers_row.addWidget(button('刷新订阅列表', lambda: self.refresh_subscribers(force=True), icon='refresh'))
                 form.addLayout(subscribers_row)
                 probe_row = QHBoxLayout()
                 self.probe_button = button('检查 NapCat 连接', self.check_connection, icon='refresh')
@@ -467,7 +488,7 @@ class ConfigWindow(QMainWindow):
                 form.addWidget(label('测试内容：' + TEST_MESSAGE, 'muted', True))
                 self.test_send_status = label('每次点击只向所选 QQ 号发送一条测试消息。', 'muted', True)
                 form.addWidget(self.test_send_status)
-                self.fields['push.qq.private_qq'][0].textChanged.connect(self.update_test_recipients)
+                self.fields['push.qq.private_qq'][0].changed.connect(self.update_test_recipients)
             elif name == 'email':
                 self.grid_into(form, [
                     self.field('push.email.smtp_host', 'SMTP 服务器', default='smtp.163.com'),
@@ -475,12 +496,18 @@ class ConfigWindow(QMainWindow):
                     self.field('push.email.username', '发件邮箱'),
                     self.field('push.email.password', '邮箱授权码', 'secret', hint='填写 SMTP 授权码'),
                 ])
-                form.addWidget(self.field('push.email.to', '收件邮箱', 'list', [], '多个邮箱用逗号或换行分隔'))
+                form.addWidget(self.field(
+                    'push.email.to', '收件邮箱', 'recipient_list', [],
+                    '可添加、删除和备注；每行一个邮箱地址。',
+                    profile_path='push.email.to_profiles'))
             else:
                 self.grid_into(form, [
                     self.field('push.telegram.bot_token', 'Bot Token', 'secret', hint='由 Telegram BotFather 提供'),
-                    self.field('push.telegram.chat_id', 'Chat ID', hint='用户、群组或频道 ID'),
                 ])
+                form.addWidget(self.field(
+                    'push.telegram.chat_ids', 'Telegram 接收用户/群组', 'recipient_list', [],
+                    '双击编辑；每行一个 Chat ID。添加、删除或备注后请保存配置。',
+                    profile_path='push.telegram.chat_profiles'))
                 form.addWidget(self.field('push.telegram.proxy', 'Telegram 代理', hint='可选，例如 http://127.0.0.1:7890'))
             toggle.toggled.connect(lambda checked, n=name: self.channel_visibility(n, checked))
             card.layout.addWidget(body)
@@ -1058,6 +1085,25 @@ class ConfigWindow(QMainWindow):
             success = isinstance(result, dict) and result.get('ok', False)
             self.test_send_status.setText(result.get('message', result.get('error', '发送未完成')) if isinstance(result, dict) else '发送未完成')
             self.test_send_status.setStyleSheet('color: #277c55;' if success else 'color: #977349;')
+        elif name == 'qq-friends':
+            editor = self.fields['push.qq.private_qq'][0]
+            editor.set_refresh_enabled(True)
+            if (isinstance(result, dict) and result.get('epoch') == self._recipient_epoch
+                    and isinstance(result.get('profiles'), list)):
+                # Refresh subscriptions first. Merge names by ID so a late network
+                # result cannot resurrect someone removed while it was pending.
+                self.refresh_subscribers(force=True)
+                rows = editor.values()
+                old = {item['user_id']: item for item in result.get('original', [])}
+                names = {item['user_id']: item.get('nickname', '') for item in result['profiles']}
+                for row in rows:
+                    if row['user_id'] in old and row.get('nickname', '') == old[row['user_id']].get('nickname', ''):
+                        row['nickname'] = names.get(row['user_id'], row.get('nickname', ''))
+                editor.set_values(rows)
+                self.on_change()
+                self.save_status.setText(result.get('message', 'QQ 名称已刷新，请保存配置。'))
+            elif isinstance(result, dict) and result.get('epoch') == self._recipient_epoch:
+                self.save_status.setText(result.get('error', 'QQ 名称刷新失败。'))
         elif name == 'cache':
             self.cache_page.finish(result)
         elif name == 'napcat-qr':
@@ -1079,6 +1125,8 @@ class ConfigWindow(QMainWindow):
 
     def editor_value(self, path):
         editor, kind, _ = self.fields[path]
+        if isinstance(editor, RecipientTable):
+            return editor.identifiers()
         if isinstance(editor, QCheckBox):
             return editor.isChecked()
         if isinstance(editor, (QSpinBox, QDoubleSpinBox)):
@@ -1095,6 +1143,7 @@ class ConfigWindow(QMainWindow):
         return editor.text().strip()
 
     def populate(self):
+        self._recipient_epoch += 1
         self.loading = True
         for path, (editor, kind, default) in self.fields.items():
             if path.endswith(('.adapter', '.requires_api_key')):
@@ -1105,7 +1154,12 @@ class ConfigWindow(QMainWindow):
                     pass
             value = get_value(self.store.data, path, deepcopy(default))
             editor.blockSignals(True)
-            if isinstance(editor, QCheckBox):
+            if isinstance(editor, RecipientTable):
+                profile_path = self.recipient_profile_paths[path]
+                rows = recipient_rows(get_value(self.store.data, 'push.' + path.split('.')[1], {}), path.split('.')[1])
+                editor.set_values(rows)
+                self.recipient_profile_baseline[profile_path] = deepcopy(editor.values())
+            elif isinstance(editor, QCheckBox):
                 editor.setChecked(bool(value))
             elif isinstance(editor, (QSpinBox, QDoubleSpinBox)):
                 # Loading a valid pre-existing large value must not silently clamp it.
@@ -1169,6 +1223,35 @@ class ConfigWindow(QMainWindow):
             self.test_qq.setCurrentIndex(0)
         self.test_qq.blockSignals(False)
 
+    def _sync_recipient_table(self, path, latest):
+        editor = self.fields[path][0]
+        if editor.table.state() == QAbstractItemView.State.EditingState:
+            return False
+        profile_path = self.recipient_profile_paths[path]
+        channel = path.split('.')[1]
+        incoming = recipient_rows(get_value(latest, 'push.' + channel, {}), channel)
+        if editor.identifiers() != self.baseline[path]:
+            return False
+        rows = merge_refreshed_rows(self.recipient_profile_baseline[profile_path], editor.values(), incoming, editor.identifier_key)
+        editor.set_values(rows)
+        self.baseline[path] = [row[editor.identifier_key] for row in incoming]
+        self.recipient_profile_baseline[profile_path] = deepcopy(incoming)
+        section = get_value(latest, 'push.' + channel, {})
+        for value_path in (path, profile_path):
+            key = value_path.rsplit('.', 1)[1]
+            target = self.store.data.setdefault('push', {}).setdefault(channel, {})
+            if key in section:
+                target[key] = deepcopy(section[key])
+            else:
+                target.pop(key, None)
+        if channel == 'telegram':
+            target = self.store.data['push']['telegram']
+            if 'chat_id' in section:
+                target['chat_id'] = deepcopy(section['chat_id'])
+            else:
+                target.pop('chat_id', None)
+        return True
+
     def refresh_subscribers(self, force=False):
         if self.loading or self._closing:
             return
@@ -1178,26 +1261,78 @@ class ConfigWindow(QMainWindow):
             if not force and stamp == self._subscription_stamp:
                 return
             latest = self.store.read()
-            raw = get_value(latest, 'push.qq.private_qq', [])
-            values = [str(value).strip() for value in raw] if isinstance(raw, list) else [part for part in re.split(r'[,，;；\s]+', raw) if part]
-            if self.editor_value('push.qq.private_qq') != self.baseline.get('push.qq.private_qq'):
-                self.subscription_status.setText('正在编辑接收列表；当前已保存的 QQ：' + ('、'.join(values) or '暂无') + '。完成编辑后保存，若冲突会提示重新载入。')
-                # Keep the external change pending if the user later undoes the
-                # manual edit; a consumed stamp would hide that subscription.
-                return
-            else:
-                editor = self.fields['push.qq.private_qq'][0]
-                editor.blockSignals(True)
-                editor.setPlainText('\n'.join(values))
-                editor.blockSignals(False)
-                self.baseline['push.qq.private_qq'] = self.editor_value('push.qq.private_qq')
-                set_value(self.store.data, 'push.qq.private_qq', raw)
+            synced = [self._sync_recipient_table(path, latest) for path in self.recipient_profile_paths]
+            values = recipient_rows(get_value(latest, 'push.qq', {}), 'qq')
+            if all(synced):
+                self._subscription_stamp = stamp
                 self.subscription_status.setText(f'已同步 {len(values)} 个接收 QQ · {datetime.now().strftime("%H:%M:%S")} · 订阅与退订自动更新')
-                self.update_test_recipients()
-                self.on_change()
-            self._subscription_stamp = stamp
+            else:
+                ids = '、'.join(row['user_id'] for row in values) or '暂无'
+                self.subscription_status.setText('正在编辑接收列表；当前已保存的 QQ：' + ids + '。保存冲突时会提示重新载入。')
+            self.update_test_recipients()
+            self.on_change()
         except (OSError, ValueError, TypeError):
             self.subscription_status.setText('暂时无法读取最新订阅，已保留当前显示内容。')
+
+    def refresh_recipient_list(self, path):
+        """Refresh saved rows without discarding unsaved changes."""
+        if self.loading or self._closing:
+            return
+        self.refresh_subscribers(force=True)
+        if path != 'push.qq.private_qq' or 'qq-friends' in self.background_tasks:
+            return
+        config = self.effective_config()
+        # Include unsaved names/notes even when only IDs have not changed.
+        config['push']['qq']['private_qq_profiles'] = self.fields[path][0].values()
+        epoch = self._recipient_epoch
+        def fetch():
+            result = self.fetch_qq_profiles(config)
+            result['epoch'] = epoch
+            result['original'] = config['push']['qq']['private_qq_profiles']
+            return result
+        if self.run_background('qq-friends', fetch):
+            self.fields[path][0].set_refresh_enabled(False)
+            self.save_status.setText('正在读取 QQ 名称…')
+
+    @staticmethod
+    def fetch_qq_profiles(config):
+        """One read-only friend-list request; no model or message is sent."""
+        import requests
+        from urllib.parse import urlsplit
+        qq = get_value(config, 'push.qq', {})
+        base = str(qq.get('http_base', 'http://127.0.0.1:3000') or '').rstrip('/')
+        token = str(qq.get('access_token', '') or '')
+        current = recipient_rows(qq, 'qq')
+        try:
+            parsed = urlsplit(base)
+            if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.query or parsed.fragment
+                    or parsed.port is not None and not 1 <= parsed.port <= 65535):
+                raise ValueError('invalid address')
+            headers = {'Authorization': f'Bearer {token}'} if token else {}
+            with requests.Session() as session:
+                session.trust_env = False
+                with session.post(base + '/get_friend_list', json={}, headers=headers,
+                                  timeout=(2, 8), allow_redirects=False) as response:
+                    if response.status_code != 200:
+                        raise ValueError('unexpected HTTP status')
+                    body = response.json()
+            if (not isinstance(body, dict) or body.get('status') != 'ok'
+                    or body.get('retcode', 0) not in (0, '0')
+                    or not isinstance(body.get('data'), list)
+                    or any(not isinstance(item, dict) for item in body['data'])):
+                raise ValueError('invalid friend response')
+            by_id = {str(item.get('user_id')): item for item in body['data']}
+            updated = 0
+            for row in current:
+                friend = by_id.get(row['user_id'], {})
+                name = friend.get('nickname') or friend.get('remark')
+                if isinstance(name, str) and name.strip():
+                    row['nickname'] = name.strip()
+                    updated += 1
+            return {'profiles': current, 'message': f'已获取 {updated}/{len(current)} 个 QQ 名称；备注已保留，请保存配置。'}
+        except (requests.RequestException, ValueError, TypeError):
+            return {'error': '无法读取 NapCat 好友名称，请确认 NapCat 已登录且接口可用；当前列表和备注已保留。'}
 
     def send_qq_test(self):
         if 'qq-test' in self.background_tasks:
@@ -1270,6 +1405,14 @@ class ConfigWindow(QMainWindow):
 
     def changes(self):
         changed = {path: self.editor_value(path) for path in self.fields if self.editor_value(path) != self.baseline.get(path)}
+        for path, profile_path in self.recipient_profile_paths.items():
+            editor = self.fields[path][0]
+            current = editor.values()
+            if current != self.recipient_profile_baseline.get(profile_path, []):
+                changed[profile_path] = current
+        if 'push.telegram.chat_ids' in changed or 'push.telegram.chat_profiles' in changed:
+            changed['push.telegram.chat_ids'] = self.editor_value('push.telegram.chat_ids')
+            changed['push.telegram.chat_id'] = ''
         enabled = self.enabled_channels()
         if enabled != get_value(self.store.data, 'push.enabled', []):
             changed['push.enabled'] = enabled

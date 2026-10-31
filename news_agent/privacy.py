@@ -10,7 +10,8 @@ _lock = threading.Lock()
 PRIVATE_KEYS = {'apikey','password','passwd','smtppassword','authorizationcode','accesskey',
                 'token','accesstoken','bottoken','secret','clientsecret','privateqq',
                 'groupid','chatid','username','email','to','userid','uin','qq','cookies',
-                'cookie','authorization','session','sessionkey','refreshtoken','apisecret'}
+                'cookie','authorization','session','sessionkey','refreshtoken','apisecret',
+                'chatids','privateqqprofiles','toprofiles','chatprofiles','address'}
 
 
 def is_private_key(key):
@@ -20,7 +21,11 @@ def is_private_key(key):
 def private_values(data):
     found = set()
     def collect(value):
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if is_private_key(key) or key in {'nickname', 'name', 'title', 'note'}:
+                    collect(child)
+        elif isinstance(value, (list, tuple)):
             for child in value:
                 collect(child)
         elif isinstance(value, (str, int)) and not isinstance(value, bool):

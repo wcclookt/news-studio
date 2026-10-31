@@ -5,6 +5,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from .base import PushChannel, PushError
+from ..recipient_profiles import recipient_ids
 
 
 class EmailChannel(PushChannel):
@@ -16,7 +17,7 @@ class EmailChannel(PushChannel):
         self.smtp_port = cfg.get("smtp_port", 465)
         self.username = cfg.get("username", "")
         self.password = cfg.get("password", "")
-        self.to = cfg.get("to", [])
+        self.to = recipient_ids(cfg, 'email')
         self.retries = int(cfg.get("retries", 3))
 
     @staticmethod
