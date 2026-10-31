@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Explicit, ambient and direct routes shared by diagnostics and collection.
 
 Only connection failures trigger another route. An HTTP denial is returned to

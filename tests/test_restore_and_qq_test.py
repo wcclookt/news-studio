@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Restore durability, live subscription UI, and explicit mocked NapCat sends."""
 
 from copy import deepcopy

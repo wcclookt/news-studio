@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """The News Studio configuration window. Opening it never starts a news task."""
 
 from copy import deepcopy
@@ -16,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config_store import ConfigStore, get_value, set_value, validate_config
-from .. import __author__, PROJECT_ATTRIBUTION
+from .. import __author__, COPYRIGHT_NOTICE, PROJECT_ATTRIBUTION
 from ..config_io import atomic_update_json
 from ..recipient_profiles import recipient_rows, merge_refreshed_rows
 from ..model_catalog import ADAPTER_CHOICES, PROVIDER_PRESETS, PROVIDERS_BY_ID, provider_requires_api_key, resolve_adapter
@@ -220,7 +223,7 @@ class ConfigWindow(QMainWindow):
         side.addSpacing(10)
         self.developer_credit = label('西新个人作品 · AI 辅助', 'sideCaption', True)
         self.developer_credit.setAccessibleName('开发者署名')
-        self.developer_credit.setToolTip(PROJECT_ATTRIBUTION)
+        self.developer_credit.setToolTip(PROJECT_ATTRIBUTION + '\n' + COPYRIGHT_NOTICE)
         side.addWidget(self.developer_credit)
         self.about_button = button('关于星闻', self.show_about, icon='spark')
         self.about_button.setObjectName('link')
@@ -272,6 +275,7 @@ class ConfigWindow(QMainWindow):
             self, '关于星闻 · News Studio',
             f'开发者：{__author__}\n\n{PROJECT_ATTRIBUTION}\n\n'
             '本项目的开发与维护由西新主导，AI 作为辅助工具参与。\n\n'
+            f'{COPYRIGHT_NOTICE}\n原创部分的再分发或商业利用需事先书面授权；法定与平台权利另行适用。\n完整授权边界见仓库 LICENSE。\n\n'
             'NapCat、Steam++、PySide6 等第三方组件的原作者署名和许可信息保持不变。',
         )
 

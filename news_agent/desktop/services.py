@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Bounded diagnostics and project-scoped desktop service control.
 
 Nothing starts at import time or during a status check. Process commands are

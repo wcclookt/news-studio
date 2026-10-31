@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Validated hot configuration shared by the scheduler, model calls and QQ bot.
 
 Only a whole valid JSON snapshot is published. The watcher does not restart

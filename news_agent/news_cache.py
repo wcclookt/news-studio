@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Persistent news fingerprints and configurable whole-library maintenance.
 
 The existing SQLite news database remains the single source of truth. AI

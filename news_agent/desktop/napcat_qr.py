@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Read this NapCat session's locally generated PNG, without a QR web service.
 
 The image is returned in memory only. An old file from a previous process or an

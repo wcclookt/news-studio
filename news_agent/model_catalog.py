@@ -1,3 +1,6 @@
+# Copyright (c) 2026 西新 (wcclookt). All rights reserved.
+# First-party portions only; see LICENSE and THIRD_PARTY_NOTICES.md.
+
 """Editable provider presets, shared by the desktop editor and HTTP adapters.
 
 Model IDs are examples from each provider's own documentation, not a closed list
